@@ -258,119 +258,188 @@ def execute_tool(
 
 def run_agent(user_request):
 
-    messages = [
-
-        {
-            "role": "system",
-
-            "content": """
+    # Ask the LLM to decide which actions are needed.
+    decision_prompt = f"""
 You are an AI task management agent.
 
-Your job is to understand the user's request and use
-available tools when necessary.
+Analyze the user's request and decide which actions are required.
 
-Available actions:
+Available tools:
 
-1. Calculator
-2. Add task
-3. List tasks
-4. Remove task
+1. calculator
+   Arguments:
+   {{"expression": "mathematical expression"}}
 
-IMPORTANT RULES:
+2. add_task
+   Arguments:
+   {{"task": "task text"}}
 
-- Use tools whenever an action is required.
-- Never claim an action was completed unless the tool
-  actually executed it.
-- Continue using tools when multiple actions are required.
-- Only provide the final response after completing the
-  required actions.
+3. list_tasks
+   Arguments:
+   {{}}
+
+4. remove_task
+   Arguments:
+   {{"task_number": 1}}
+
+Return ONLY valid JSON.
+
+Use this format:
+
+{{
+  "actions": [
+    {{
+      "tool": "tool_name",
+      "arguments": {{}}
+    }}
+  ]
+}}
+
+If no tool is required, return:
+
+{{
+  "actions": []
+}}
+
+User request:
+{user_request}
 """
-        },
 
-        {
-            "role": "user",
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a precise AI agent that selects tools."
+            },
+            {
+                "role": "user",
+                "content": decision_prompt
+            }
+        ],
+        max_tokens=300
+    )
 
-            "content": user_request
-        }
+    decision_text = response.choices[0].message.content.strip()
 
-    ]
+    # Remove Markdown JSON fences if the model adds them
+    decision_text = decision_text.replace(
+        "```json", ""
+    ).replace(
+        "```", ""
+    ).strip()
 
-    max_steps = 5
+    try:
 
-    for step in range(max_steps):
+        decision = json.loads(decision_text)
 
-        response = client.chat.completions.create(
+    except Exception:
 
+        return (
+            "I could not understand the requested action.",
+            []
+        )
+
+    actions = decision.get(
+        "actions",
+        []
+    )
+
+    tool_activity = []
+    tool_results = []
+
+    # Execute selected tools
+    for action in actions:
+
+        tool_name = action.get(
+            "tool"
+        )
+
+        arguments = action.get(
+            "arguments",
+            {}
+        )
+
+        result = execute_tool(
+            tool_name,
+            arguments
+        )
+
+        tool_activity.append(
+            {
+                "tool": tool_name,
+                "arguments": arguments,
+                "result": result
+            }
+        )
+
+        tool_results.append(
+            f"Tool: {tool_name}\n"
+            f"Arguments: {arguments}\n"
+            f"Result: {result}"
+        )
+
+    # If no tool was required
+    if not tool_results:
+
+        final_response = client.chat.completions.create(
             model=MODEL,
-
-            messages=messages,
-
-            tools=tools,
-
-            tool_choice="auto",
-
-            max_tokens=400
-        )
-
-        assistant_message = response.choices[0].message
-
-        # No more tools required
-
-        if not getattr(
-            assistant_message,
-            "tool_calls",
-            None
-        ):
-
-            return (
-                assistant_message.content,
-                []
-            )
-
-        messages.append(
-            assistant_message
-        )
-
-        tool_activity = []
-
-        for tool_call in assistant_message.tool_calls:
-
-            tool_name = (
-                tool_call.function.name
-            )
-
-            arguments = json.loads(
-                tool_call.function.arguments
-            )
-
-            result = execute_tool(
-                tool_name,
-                arguments
-            )
-
-            tool_activity.append(
+            messages=[
                 {
-                    "tool": tool_name,
-                    "arguments": arguments,
-                    "result": result
-                }
-            )
-
-            messages.append(
-                {
-                    "role": "tool",
-
-                    "tool_call_id":
-                        tool_call.id,
-
+                    "role": "system",
                     "content":
-                        str(result)
+                        "You are a helpful AI assistant."
+                },
+                {
+                    "role": "user",
+                    "content": user_request
                 }
-            )
+            ],
+            max_tokens=300
+        )
+
+        return (
+            final_response.choices[0].message.content,
+            tool_activity
+        )
+
+    # Give tool results back to the LLM
+    result_context = "\n\n".join(
+        tool_results
+    )
+
+    final_prompt = f"""
+You are an AI task management assistant.
+
+The user requested:
+
+{user_request}
+
+The following actions were actually executed:
+
+{result_context}
+
+Write a concise final response to the user.
+
+IMPORTANT:
+Only claim that an action was completed if the tool
+result confirms that it was completed.
+"""
+
+    final_response = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": final_prompt
+            }
+        ],
+        max_tokens=300
+    )
 
     return (
-        "The agent reached the maximum number of tool steps.",
-        []
+        final_response.choices[0].message.content,
+        tool_activity
     )
 
 
