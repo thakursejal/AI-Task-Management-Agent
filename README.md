@@ -2,6 +2,19 @@
 
 An AI-powered task management agent built using Python, Streamlit, Hugging Face and function calling.
 
+## 🌐 Live Demo
+
+🚀 **Try the AI Task Management Agent:**
+
+👉 https://ai-task-management-agent.streamlit.app/
+
+The live application demonstrates:
+- 🤖 AI agent decision-making
+- 🛠️ Tool calling
+- 📝 Task management
+- 🧮 Calculator tool
+- 🔄 Multi-step agent workflows
+
 ## 🎯 Project Overview
 
 This project demonstrates how an AI agent can understand a user's request, decide which tool is required, execute that tool, process the result, and generate a final response.
